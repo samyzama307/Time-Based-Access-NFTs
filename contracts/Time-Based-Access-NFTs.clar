@@ -12,6 +12,11 @@
 (define-constant ERR-ACCESS-NOT-STARTED (err u108))
 (define-constant ERR-INVALID-TIME (err u109))
 
+(define-constant ROYALTY-BPS u500)
+(define-constant BPS-DENOM u10000)
+(define-constant ERR-NOT-LISTED (err u110))
+(define-constant ERR-NOT-ENOUGH-STX (err u111))
+
 (define-data-var last-token-id uint u0)
 (define-data-var contract-paused bool false)
 
@@ -179,4 +184,75 @@
 
 (define-read-only (is-paused)
     (var-get contract-paused)
+)
+
+
+(define-map listings 
+    uint 
+    {seller: principal, price: uint}
+)
+
+(define-private (royalty-amount (price uint))
+    (/ (* price ROYALTY-BPS) BPS-DENOM)
+)
+
+(define-read-only (get-listing (token-id uint))
+    (map-get? listings token-id)
+)
+
+(define-public (list-for-sale (token-id uint) (price uint))
+    (let (
+        (token-owner (unwrap! (nft-get-owner? time-access-nft token-id) ERR-NOT-FOUND))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-PAUSED)
+    (asserts! (is-eq tx-sender token-owner) ERR-NOT-TOKEN-OWNER)
+    (asserts! (is-none (map-get? listings token-id)) ERR-LISTING-EXISTS)
+    (map-set listings token-id {seller: token-owner, price: price})
+    (ok true))
+)
+
+(define-public (cancel-listing (token-id uint))
+    (let (
+        (listing (unwrap! (map-get? listings token-id) ERR-NOT-LISTED))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-PAUSED)
+    (asserts! (is-eq tx-sender (get seller listing)) ERR-NOT-TOKEN-OWNER)
+    (map-delete listings token-id)
+    (ok true))
+)
+
+(define-public (buy (token-id uint))
+    (let (
+        (listing (unwrap! (map-get? listings token-id) ERR-NOT-LISTED))
+        (seller (get seller listing))
+        (price (get price listing))
+        (metadata (unwrap! (get-token-metadata token-id) ERR-NOT-FOUND))
+        (creator (get creator metadata))
+        (royalty (royalty-amount price))
+        (seller-payment (- price royalty))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-PAUSED)
+    (asserts! (>= (stx-get-balance tx-sender) price) ERR-NOT-ENOUGH-STX)
+    (try! (stx-transfer? royalty tx-sender creator))
+    (try! (stx-transfer? seller-payment tx-sender seller))
+    (try! (nft-transfer? time-access-nft token-id seller tx-sender))
+    (map-delete listings token-id)
+    (ok true))
+)
+
+(define-read-only (get-marketplace-info (token-id uint))
+    (match (map-get? listings token-id)
+        listing (ok {
+            listed: true,
+            seller: (get seller listing),
+            price: (get price listing),
+            royalty-amount: (royalty-amount (get price listing))
+        })
+        (ok {
+            listed: false,
+            seller: tx-sender,
+            price: u0,
+            royalty-amount: u0
+        })
+    )
 )
