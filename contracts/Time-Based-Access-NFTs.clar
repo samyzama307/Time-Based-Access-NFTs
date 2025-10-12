@@ -256,3 +256,58 @@
         })
     )
 )
+
+(define-constant ERR-NO-STATS (err u112))
+
+(define-map access-usage-stats
+    {token-id: uint, user: principal}
+    {
+        total-verifications: uint,
+        last-verified-block: uint,
+        first-verified-block: uint
+    }
+)
+
+(define-read-only (get-usage-stats (token-id uint) (user principal))
+    (ok (default-to 
+        {total-verifications: u0, last-verified-block: u0, first-verified-block: u0}
+        (map-get? access-usage-stats {token-id: token-id, user: user})
+    ))
+)
+
+(define-read-only (get-user-verification-count (token-id uint) (user principal))
+    (ok (get total-verifications (default-to 
+        {total-verifications: u0, last-verified-block: u0, first-verified-block: u0}
+        (map-get? access-usage-stats {token-id: token-id, user: user})
+    )))
+)
+
+(define-read-only (has-user-verified (token-id uint) (user principal))
+    (is-some (map-get? access-usage-stats {token-id: token-id, user: user}))
+)
+
+(define-private (record-verification (token-id uint) (user principal))
+    (let (
+        (current-stats (map-get? access-usage-stats {token-id: token-id, user: user}))
+        (current-block stacks-block-height)
+    )
+    (match current-stats
+        stats (map-set access-usage-stats 
+            {token-id: token-id, user: user}
+            {
+                total-verifications: (+ (get total-verifications stats) u1),
+                last-verified-block: current-block,
+                first-verified-block: (get first-verified-block stats)
+            }
+        )
+        (map-set access-usage-stats 
+            {token-id: token-id, user: user}
+            {
+                total-verifications: u1,
+                last-verified-block: current-block,
+                first-verified-block: current-block
+            }
+        )
+    )
+    (ok true))
+)
