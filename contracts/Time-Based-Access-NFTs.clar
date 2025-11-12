@@ -17,6 +17,9 @@
 (define-constant ERR-NOT-LISTED (err u110))
 (define-constant ERR-NOT-ENOUGH-STX (err u111))
 
+(define-constant ERR-BATCH-LIMIT (err u113))
+(define-constant MAX-BATCH-SIZE u50)
+
 (define-data-var last-token-id uint u0)
 (define-data-var contract-paused bool false)
 
@@ -310,4 +313,59 @@
         )
     )
     (ok true))
+)
+
+(define-private (process-grant (user principal) (token-id uint))
+    (begin
+        (map-set access-permissions {token-id: token-id, user: user} {granted: true})
+        token-id
+    )
+)
+
+(define-private (process-revoke (user principal) (token-id uint))
+    (begin
+        (map-set access-permissions {token-id: token-id, user: user} {granted: false})
+        token-id
+    )
+)
+
+(define-public (batch-grant-access (token-id uint) (users (list 50 principal)))
+    (let (
+        (token-owner (unwrap! (nft-get-owner? time-access-nft token-id) ERR-NOT-FOUND))
+        (users-count (len users))
+    )
+    (asserts! (is-eq tx-sender token-owner) ERR-NOT-TOKEN-OWNER)
+    (asserts! (<= users-count MAX-BATCH-SIZE) ERR-BATCH-LIMIT)
+    (ok (fold process-grant users token-id)))
+)
+
+(define-public (batch-revoke-access (token-id uint) (users (list 50 principal)))
+    (let (
+        (token-owner (unwrap! (nft-get-owner? time-access-nft token-id) ERR-NOT-FOUND))
+        (users-count (len users))
+    )
+    (asserts! (is-eq tx-sender token-owner) ERR-NOT-TOKEN-OWNER)
+    (asserts! (<= users-count MAX-BATCH-SIZE) ERR-BATCH-LIMIT)
+    (ok (fold process-revoke users token-id)))
+)
+
+(define-private (check-user-access-helper (user-data {user: principal, token: uint}))
+    {
+        user: (get user user-data),
+        has-access: (has-access (get token user-data) (get user user-data))
+    }
+)
+
+(define-private (prepare-user-data (user principal) (result {token: uint, users: (list 50 {user: principal, token: uint})}))
+    {
+        token: (get token result),
+        users: (unwrap-panic (as-max-len? (append (get users result) {user: user, token: (get token result)}) u50))
+    }
+)
+
+(define-read-only (get-batch-access-status (token-id uint) (users (list 50 principal)))
+    (let (
+        (user-data-list (get users (fold prepare-user-data users {token: token-id, users: (list)})))
+    )
+    (ok (map check-user-access-helper user-data-list)))
 )
